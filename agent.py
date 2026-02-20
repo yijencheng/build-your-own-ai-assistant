@@ -1,6 +1,7 @@
 from google.genai import types, Client
 from pydantic import BaseModel
 from typing import Any, Literal, Optional, Union
+from adaptor import MessageAdaptor, ConsoleMemoryMessageAdaptor
 
 
 class ToolDefinition(BaseModel):
@@ -207,17 +208,18 @@ class Agent:
         self,
         compaction_threshold: int,
         tools: Optional[list[type[ToolDefinition]]] = None,
+        message_adaptor: Optional[MessageAdaptor] = None,
     ):
         """
         We define a client, history
         """
         self.client = Client()
-        self.history: list[Union[Message, FunctionResponse]] = []
         self.compaction_threshold = compaction_threshold
         self.tool_models = tools or TOOLS
         self.tool_name_to_model = {tool.__name__: tool for tool in self.tool_models}
         self.tool_names = set(self.tool_name_to_model.keys())
         self.tools = [tool.to_tool_schema() for tool in self.tool_models]
+        self.message_adaptor = message_adaptor or ConsoleMemoryMessageAdaptor()
 
     def run(
         self,
@@ -231,12 +233,13 @@ class Agent:
         if not isinstance(turn_input, Message):
             raise ValueError(f"Invalid type of {type(turn_input)}")
 
-        self.history.append(turn_input)
+        self.message_adaptor.save_message(turn_input)
 
         for _ in range(max_round_budget):
+            history = self.message_adaptor.get_history()
             response = self.client.models.generate_content(
                 model="gemini-3-flash-preview",
-                contents=[item.to_gemini_content() for item in self.history],
+                contents=[item.to_gemini_content() for item in history],
                 config=types.GenerateContentConfig(
                     tools=self.tools,
                     thinking_config=types.ThinkingConfig(
@@ -248,8 +251,8 @@ class Agent:
             )
 
             message = Message.from_assistant_response(response)
-            message.print_pretty()
-            self.history.append(message)
+            self.message_adaptor.print_new_message(message)
+            self.message_adaptor.save_message(message)
             tool_calls = [
                 part for part in message.content if isinstance(part, FunctionPart)
             ]
@@ -257,7 +260,9 @@ class Agent:
                 return message
 
             for tool_call in tool_calls:
-                self.history.append(self.execute_tool(tool_call))
+                tool_response = self.execute_tool(tool_call)
+                self.message_adaptor.print_new_message(tool_response)
+                self.message_adaptor.save_message(tool_response)
 
         raise RuntimeError("Exceeded max_round_budget while resolving tool calls.")
 
