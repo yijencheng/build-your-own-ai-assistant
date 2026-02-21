@@ -14,7 +14,7 @@ from agent_types import (
     ToolDefinition,
     ToolRuntime,
 )
-from runtime import BasicFileToolRuntime
+from runtime import ModalSandboxToolRuntime
 
 
 class Agent:
@@ -89,7 +89,7 @@ class Agent:
 
 
 async def main():
-    agent = Agent(tools=BASIC_TOOLS, tool_runtime=BasicFileToolRuntime())
+    agent = Agent(tools=BASIC_TOOLS, tool_runtime=ModalSandboxToolRuntime())
 
     while True:
         user_input = input("You: ")

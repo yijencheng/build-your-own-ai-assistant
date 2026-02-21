@@ -44,6 +44,13 @@ class EditTool(ToolDefinition):
     replace_all: bool = False
 
 
+class BashTool(ToolDefinition):
+    model_config = ConfigDict(title="bash")
+    command: str
+    timeout_seconds: int = 30
+    working_dir: str = "."
+
+
 class ThinkingPart(BaseModel):
     thought: Optional[bool] = None
     thought_signature: Optional[bytes] = None
@@ -228,4 +235,4 @@ class ToolRuntime(Protocol):
     ) -> FunctionResponse: ...
 
 
-BASIC_TOOLS: list[type[ToolDefinition]] = [WriteTool, LsTool, EditTool]
+BASIC_TOOLS: list[type[ToolDefinition]] = [WriteTool, LsTool, EditTool, BashTool]
