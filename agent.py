@@ -3,7 +3,7 @@ from typing import Optional
 
 from google.genai import Client, types as genai_types
 
-from adapters import ConsoleMemoryMessageAdaptor
+from adapters import ConsoleMemoryMessageAdaptor, TextualMemoryMessageAdaptor
 from agent_types import (
     BASIC_TOOLS,
     FunctionPart,
@@ -89,7 +89,11 @@ class Agent:
 
 
 async def main():
-    agent = Agent(tools=BASIC_TOOLS, tool_runtime=ModalSandboxToolRuntime())
+    agent = Agent(
+        tools=BASIC_TOOLS,
+        tool_runtime=ModalSandboxToolRuntime(),
+        message_adaptor=TextualMemoryMessageAdaptor(),
+    )
 
     while True:
         user_input = input("You: ")
