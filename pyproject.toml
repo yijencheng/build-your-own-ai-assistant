@@ -1,10 +1,13 @@
 [project]
-name = "build-your-own-ai-assistant"
+name = "koroku"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Minimal Coding Agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "modal>=1.3.3",
-    "textual>=0.60.0",
+    "google-genai>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "python-telegram-bot>=21.0",
+    "python-dotenv>=1.0.1",
 ]
