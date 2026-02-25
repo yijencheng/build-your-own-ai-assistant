@@ -10,4 +10,5 @@ dependencies = [
     "uvicorn>=0.34.0",
     "python-telegram-bot>=21.0",
     "python-dotenv>=1.0.1",
+    "rich>=13.7.0",
 ]
