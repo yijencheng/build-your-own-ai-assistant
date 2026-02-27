@@ -6,6 +6,9 @@ import uuid
 from telegram_types import TelegramUpdate
 from google.genai import types
 
+from agent import Agent, SessionManager
+from agent_tools import AgentContext, ToolResult
+
 SCALEDOWN_WINDOW = 300
 
 telegram_secret = modal.Secret.from_name("telegram-bot")
@@ -13,7 +16,7 @@ gemini_secret = modal.Secret.from_name("gemini-api")
 
 image = (
     modal.Image.debian_slim()
-    .pip_install("pydantic>=2,<3", "fastapi[standard]>=0.115,<1", "google-genai")
+    .pip_install("pydantic>=2,<3", "fastapi[standard]>=0.115,<1", "google-genai", "aiosqlite", "rich", "httpx")
     .add_local_dir("4 - Cloud Atlas", remote_path="/root")
 )
 sandbox_image = modal.Image.debian_slim().apt_install("curl", "procps")
@@ -28,6 +31,7 @@ message_queue = modal.Queue.from_name("koroku-messages", create_if_missing=True)
     scaledown_window=SCALEDOWN_WINDOW,
     timeout=SCALEDOWN_WINDOW,
     secrets=[telegram_secret, gemini_secret],
+    max_containers=1,
 )
 class WebApp:
     """
@@ -71,36 +75,23 @@ class WebApp:
         await self.process_message.spawn.aio()
         return {"success": "ok"}
 
-    async def drain_queue(self):
-        messages = []
+    async def drain_queue(self) -> tuple[list[str], bool, int | None]:
+        parts: list[str] = []
+        stopped = False
+        chat_id: int | None = None
         while True:
             try:
-                message = await message_queue.get.aio(timeout=0)
+                raw = await message_queue.get.aio(timeout=0)
             except queue.Empty:
                 break
-            messages.append(TelegramUpdate.model_validate_json(message))
-        return messages
-
-    async def download_telegram_file(self, file_id: str, dest_path: str) -> None:
-        bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-        await (
-            await self.sandbox.exec.aio("mkdir", "-p", os.path.dirname(dest_path))
-        ).wait.aio()
-        script = (
-            f'curl -sS "https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"'
-            f' | grep -o \'"file_path":"[^"]*"\' | cut -d\'"\' -f4'
-            f' | xargs -I{{}} curl -sS -o {dest_path} "https://api.telegram.org/file/bot{bot_token}/{{}}"'
-        )
-        p = await self.sandbox.exec.aio("bash", "-c", script)
-        await p.wait.aio()
-
-    @modal.method()
-    async def process_message(self):
-        messages = await self.drain_queue()
-
-        parts = []
-        for message in messages:
+            message = TelegramUpdate.model_validate_json(raw)
             print(f"Processing message: {message}")
+            chat_id = message.message.chat.id
+
+            text = message.message.text or message.message.caption or ""
+            if text.strip().lower().startswith("/stop"):
+                stopped = True
+                break
 
             if message.message.photo:
                 photo = message.message.photo[-1]
@@ -131,4 +122,66 @@ class WebApp:
             elif message.message.text:
                 parts.append(message.message.text)
 
-        user_message = types.UserContent(parts=parts)
+        return parts, stopped, chat_id
+
+    async def download_telegram_file(self, file_id: str, dest_path: str) -> None:
+        bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+        await (
+            await self.sandbox.exec.aio("mkdir", "-p", os.path.dirname(dest_path))
+        ).wait.aio()
+        script = (
+            f'curl -sS "https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"'
+            f' | grep -o \'"file_path":"[^"]*"\' | cut -d\'"\' -f4'
+            f' | xargs -I{{}} curl -sS -o {dest_path} "https://api.telegram.org/file/bot{bot_token}/{{}}"'
+        )
+        p = await self.sandbox.exec.aio("bash", "-c", script)
+        await p.wait.aio()
+
+    @modal.method()
+    async def process_message(self):
+        parts, stopped, chat_id = await self.drain_queue()
+        if stopped or not parts:
+            return
+
+        context = AgentContext(
+            sandbox=self.sandbox,
+            telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
+            telegram_chat_id=chat_id,
+        )
+
+        async def send_llm_response(
+            *, message: types.Content, context: AgentContext
+        ) -> None:
+            for part in message.parts:
+                if part.text:
+                    await context.send_telegram_message(part.text)
+
+        async def send_tool_result(
+            *,
+            result: ToolResult,
+            call_name: str,
+            call_args: dict[str, object],
+            context: AgentContext,
+        ) -> None:
+            status = "✓" if not result.error else "✗"
+            await context.send_telegram_message(f"{status} {call_name} {call_args}")
+
+        session_manager = SessionManager()
+        agent = Agent(session_manager=session_manager, context=context)
+        agent.on("on_model_response", send_llm_response)
+        agent.on("on_tool_result", send_tool_result)
+        await agent.initialize()
+
+        next_message: types.Content | None = types.UserContent(parts=parts)
+        while True:
+            if next_message is None:
+                break
+
+            next_message = await agent.run(next_message)
+
+            new_parts, stopped, _ = await self.drain_queue()
+            if stopped:
+                await context.send_telegram_message("Pausing execution")
+                break
+            if new_parts:
+                next_message = types.UserContent(parts=new_parts)

@@ -201,7 +201,7 @@ class SessionManager:
         self._initialized = False
 
     def should_summarise(self, events: list[StoredEvent]) -> bool:
-        max_events_before_summary = 30
+        max_events_before_summary = 50
         used_ratio = min(len(events) / max_events_before_summary, 1.0)
         remaining_pct = round((1.0 - used_ratio) * 100, 1)
         print(f"[Logging]: {remaining_pct}% context remaining")
@@ -514,7 +514,7 @@ class Agent:
         self.tools_file = Path(self.tools_module.__file__).resolve()
         self.last_modified = self._mtime(self.tools_file)
         self.tools = self._load_tools(self.tools_module)
-        self.max_tool_calls_per_turn = 2
+        self.max_tool_calls_per_turn = 10
         self._hooks: dict[HookType, list[AnyHook]] = {
             "on_model_response": [],
             "on_tool_call": [],

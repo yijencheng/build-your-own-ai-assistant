@@ -98,10 +98,10 @@ class ReadFile(AgentTool):
             )
 
         try:
-            process = _context.sandbox.exec("cat", self.path)
-            stdout = process.stdout.read()
-            stderr = process.stderr.read()
-            process.wait()
+            process = await _context.sandbox.exec.aio("cat", self.path)
+            stdout = await process.stdout.read.aio()
+            stderr = await process.stderr.read.aio()
+            await process.wait.aio()
 
             if process.returncode != 0:
                 return self.tool_result(
@@ -142,17 +142,17 @@ class Write(AgentTool):
         try:
             parent = os.path.dirname(self.path)
             if parent:
-                _context.sandbox.exec("mkdir", "-p", parent).wait()
+                await (await _context.sandbox.exec.aio("mkdir", "-p", parent)).wait.aio()
 
-            process = _context.sandbox.exec(
+            process = await _context.sandbox.exec.aio(
                 "bash", "-c", f"cat > {shlex.quote(self.path)}"
             )
             process.stdin.write(self.content.encode("utf-8"))
             process.stdin.write_eof()
-            process.wait()
+            await process.wait.aio()
 
             if process.returncode != 0:
-                stderr = process.stderr.read()
+                stderr = await process.stderr.read.aio()
                 return self.tool_result(
                     error=True,
                     response={"error": f"Failed to write '{self.path}': {stderr}"},
@@ -182,10 +182,10 @@ class Edit(AgentTool):
             )
 
         try:
-            process = _context.sandbox.exec("cat", self.path)
-            original = process.stdout.read()
-            stderr = process.stderr.read()
-            process.wait()
+            process = await _context.sandbox.exec.aio("cat", self.path)
+            original = await process.stdout.read.aio()
+            stderr = await process.stderr.read.aio()
+            await process.wait.aio()
 
             if process.returncode != 0:
                 return self.tool_result(
@@ -223,15 +223,15 @@ class Edit(AgentTool):
             replacements = 1
 
         try:
-            process = _context.sandbox.exec(
+            process = await _context.sandbox.exec.aio(
                 "bash", "-c", f"cat > {shlex.quote(self.path)}"
             )
             process.stdin.write(updated.encode("utf-8"))
             process.stdin.write_eof()
-            process.wait()
+            await process.wait.aio()
 
             if process.returncode != 0:
-                stderr = process.stderr.read()
+                stderr = await process.stderr.read.aio()
                 return self.tool_result(
                     error=True,
                     response={"error": f"Failed to write '{self.path}': {stderr}"},
@@ -301,12 +301,12 @@ class Bash(AgentTool):
                 if self.working_dir != "."
                 else self.command
             )
-            process = _context.sandbox.exec(
+            process = await _context.sandbox.exec.aio(
                 "bash", "-c", cmd, timeout=self.timeout_seconds
             )
-            stdout = process.stdout.read()
-            stderr = process.stderr.read()
-            process.wait()
+            stdout = await process.stdout.read.aio()
+            stderr = await process.stderr.read.aio()
+            await process.wait.aio()
 
             return self.tool_result(
                 error=False,
