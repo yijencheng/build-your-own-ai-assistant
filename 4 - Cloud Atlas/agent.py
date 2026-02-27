@@ -193,26 +193,31 @@ CREATE TABLE IF NOT EXISTS messages (
 
 
 class SessionManager:
-    def __init__(self, db_path: str = "agent.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "agent.db", root_dir: str | Path = "."):
+        self.root_dir = Path(root_dir)
+        db_path_obj = Path(db_path)
+        self.db_path = (
+            str(db_path_obj)
+            if db_path_obj.is_absolute()
+            else str(self.root_dir / db_path_obj)
+        )
+        self.memory_dir = self.root_dir / "memory"
         self.client = Client()
         self._conn: aiosqlite.Connection | None = None
         self._init_lock = asyncio.Lock()
         self._initialized = False
 
     def should_summarise(self, events: list[StoredEvent]) -> bool:
-        max_events_before_summary = 30
+        max_events_before_summary = 40
         used_ratio = min(len(events) / max_events_before_summary, 1.0)
         remaining_pct = round((1.0 - used_ratio) * 100, 1)
         print(f"[Logging]: {remaining_pct}% context remaining")
         return len(events) > max_events_before_summary
 
-    @staticmethod
-    def _append_summary_to_memory(summary_text: str) -> None:
+    def _append_summary_to_memory(self, summary_text: str) -> None:
         now = datetime.now()
-        memory_dir = Path("memory")
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        memory_file = memory_dir / f"{now.strftime('%d-%m-%Y')}.md"
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        memory_file = self.memory_dir / f"{now.strftime('%d-%m-%Y')}.md"
         line = f"[{now.strftime('%H:%M')}]: {summary_text}\n"
         with memory_file.open("a", encoding="utf-8") as f:
             f.write(line)
@@ -292,7 +297,6 @@ class SessionManager:
     async def generate_summary(self, events: list[StoredEvent]) -> list[StoredEvent]:
         if not events:
             return events
-
         mapped_events = self._map_events_for_compaction(events)
         if not mapped_events:
             return events
@@ -314,6 +318,13 @@ class SessionManager:
             ],
             config=types.GenerateContentConfig(
                 tools=[],
+                tool_config=types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(mode="NONE")
+                ),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+                response_mime_type="text/plain",
                 system_instruction=(
                     """
 You're about to be given mapped interactions from a conversation. Your job is to generate a summary of the conversation in at most 4 paragraphs.
@@ -335,6 +346,8 @@ Style constraints:
                 ),
             ),
         )
+        print("[Logging] Compaction Raw Response:")
+        print(response)
 
         summary_parts = [
             part.text
@@ -342,6 +355,8 @@ Style constraints:
             if not part.thought and part.text
         ]
         summary = "\n".join(summary_parts).strip()
+        if not summary:
+            summary = "Summary unavailable."
         print(summary)
         print("[Logging] Compaction Ended")
 
@@ -359,6 +374,7 @@ Style constraints:
 
             self._conn = await aiosqlite.connect(self.db_path)
             await self._conn.executescript(INIT_SQL)
+            self.memory_dir.mkdir(parents=True, exist_ok=True)
             await self._conn.commit()
             self._initialized = True
 
@@ -484,10 +500,13 @@ class ReplayHook(Protocol):
 
 AnyHook: TypeAlias = ModelResponseHook | ToolCallHook | ToolResultHook
 
-AGENT_SYSTEM_INSTRUCTION = """
+AGENT_SYSTEM_INSTRUCTION_TEMPLATE = """
 You are Koroku, a helpful AI assistant.
-You have access to past conversation history and compaction summaries stored in memory.md.
-Use this memory context when it is relevant to the current task.
+
+Here are some rules
+1. Your working directory is {root_dir}. Anything that you write to outside of this directory will not be saved since you're working in an ephemeral sandbox. Only this directory is backed up.
+
+2. You have access to timestampped summaries of prior conversations with the user in /{root_dir}/memory/dd-mm-yyyy markdown files. If the file for a specific date does not exist, you can assume that there are no prior conversations
 """
 
 TOOL_CALL_GUARDRAIL_INSTRUCTION = (
@@ -502,17 +521,19 @@ class Agent:
         model: str = "gemini-3-flash-preview",
         context: AgentContext | None = None,
         session_manager: SessionManager | None = None,
+        root_dir: str | Path = ".",
     ):
         self.model = model
         self.client = Client()
-        self.session_manager = session_manager or SessionManager()
+        self.root_dir = Path(root_dir)
+        self.session_manager = session_manager or SessionManager(root_dir=self.root_dir)
         self.context = context or AgentContext()
 
         self.tools_module = agent_tools
         self.tools_file = Path(self.tools_module.__file__).resolve()
         self.last_modified = self._mtime(self.tools_file)
         self.tools = self._load_tools(self.tools_module)
-        self.max_tool_calls_per_turn = 2
+        self.max_tool_calls_per_turn = 10
         self._hooks: dict[HookType, list[AnyHook]] = {
             "on_model_response": [],
             "on_tool_call": [],
@@ -532,6 +553,9 @@ class Agent:
         if not isinstance(event, SessionEvent) or event.role != "user":
             return False
         return not any(isinstance(part, FunctionResponsePart) for part in event.parts)
+
+    def _system_instruction(self) -> str:
+        return AGENT_SYSTEM_INSTRUCTION_TEMPLATE.format(root_dir=self.root_dir)
 
     async def initialize(
         self,
@@ -652,7 +676,7 @@ class Agent:
             contents=[event.to_content() for event in events_for_model],
             config=types.GenerateContentConfig(
                 tools=tools,
-                system_instruction=AGENT_SYSTEM_INSTRUCTION,
+                system_instruction=self._system_instruction(),
             ),
         )
 
