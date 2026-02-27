@@ -397,6 +397,17 @@ class ReplayHook(Protocol):
 
 AnyHook: TypeAlias = ModelResponseHook | ToolCallHook | ToolResultHook
 
+AGENT_SYSTEM_INSTRUCTION = """
+You are Koroku, a helpful AI assistant.
+You have access to past conversation history and compaction summaries stored in memory.md.
+Use this memory context when it is relevant to the current task.
+"""
+
+TOOL_CALL_GUARDRAIL_INSTRUCTION = (
+    "You've reached the maximum number of tool calls allowed within a single turn, "
+    "summarise what you've done so far in a single paragraph and ask the user for feedback."
+)
+
 
 class Agent:
     def __init__(
@@ -414,6 +425,7 @@ class Agent:
         self.tools_file = Path(self.tools_module.__file__).resolve()
         self.last_modified = self._mtime(self.tools_file)
         self.tools = self._load_tools(self.tools_module)
+        self.max_tool_calls_per_turn = 2
         self._hooks: dict[HookType, list[AnyHook]] = {
             "on_model_response": [],
             "on_tool_call": [],
@@ -427,6 +439,12 @@ class Agent:
     @staticmethod
     def _load_tools(module: Any) -> dict[str, type[AgentTool]]:
         return {tool.__name__: tool for tool in module.TOOLS}
+
+    @staticmethod
+    def _is_real_user_turn(event: StoredEvent) -> bool:
+        if not isinstance(event, SessionEvent) or event.role != "user":
+            return False
+        return not any(isinstance(part, FunctionResponsePart) for part in event.parts)
 
     async def initialize(
         self,
@@ -511,15 +529,44 @@ class Agent:
         has_function_response_input = any(
             part.function_response is not None for part in message.parts
         )
+        conversation = await self.session_manager.load_messages()
+
         if not has_function_response_input:
             session_message = SessionEvent.from_content(message)
             await self.session_manager.add_message(session_message)
-        conversation = await self.session_manager.load_messages()
+            conversation = await self.session_manager.load_messages()
+
+        last_user_idx = -1
+        for idx in range(len(conversation) - 1, -1, -1):
+            event = conversation[idx]
+            if self._is_real_user_turn(event):
+                last_user_idx = idx
+                break
+
+        session_events_since_last_user = (
+            len(conversation)
+            if last_user_idx < 0
+            else len(conversation) - last_user_idx - 1
+        )
+        has_tool_budget = session_events_since_last_user < self.max_tool_calls_per_turn
+
+        tools = self.get_tools() if has_tool_budget else []
+        events_for_model = list(conversation)
+        if not has_tool_budget:
+            events_for_model.append(
+                SessionEvent(
+                    role="user",
+                    parts=[TextPart(text=TOOL_CALL_GUARDRAIL_INSTRUCTION)],
+                )
+            )
 
         completion = await self.client.aio.models.generate_content(
             model=self.model,
-            contents=[event.to_content() for event in conversation],
-            config=types.GenerateContentConfig(tools=self.get_tools()),
+            contents=[event.to_content() for event in events_for_model],
+            config=types.GenerateContentConfig(
+                tools=tools,
+                system_instruction=AGENT_SYSTEM_INSTRUCTION,
+            ),
         )
 
         message = completion.candidates[0].content
