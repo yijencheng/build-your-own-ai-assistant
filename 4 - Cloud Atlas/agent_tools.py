@@ -30,6 +30,13 @@ class AgentContext:
             self.telegram_bot_token is not None and self.telegram_chat_id is not None
         )
 
+    async def send_typing_indicator(self) -> None:
+        if not self.has_telegram:
+            return
+        url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendChatAction"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            await client.post(url, json={"chat_id": self.telegram_chat_id, "action": "typing"})
+
     async def send_telegram_message(self, text: str) -> None:
         if not self.has_telegram:
             return

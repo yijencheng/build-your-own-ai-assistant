@@ -357,10 +357,12 @@ Style constraints:
             if self._initialized and self._conn is not None:
                 return
 
+            print(f"[SessionManager] Connecting to database at: {self.db_path}")
             self._conn = await aiosqlite.connect(self.db_path)
             await self._conn.executescript(INIT_SQL)
             await self._conn.commit()
             self._initialized = True
+            print(f"[SessionManager] Database initialized successfully: {self.db_path}")
 
     async def db(self) -> aiosqlite.Connection:
         if not self._initialized or self._conn is None:
@@ -543,9 +545,9 @@ class Agent:
         await self.session_manager.initialize()
         if replay_handler is None:
             return
-        events = await self.session_manager.load_messages()
-        for event in events:
-            await replay_handler(event=event)
+
+        # for event in events:
+        #     await replay_handler(event=event)
 
     def maybe_reload_runtime(self) -> bool:
         current = self._mtime(self.tools_file)
