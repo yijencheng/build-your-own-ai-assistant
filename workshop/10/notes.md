@@ -1,0 +1,1 @@
+- make sure to call out how by serialising and storing the thought signature things become a lot simpler for you ( and we want to preserve the thought signature essentially )
