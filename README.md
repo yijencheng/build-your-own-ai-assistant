@@ -2,6 +2,12 @@
 
 This is the companion code repo for the [Openclawd From Scratch](https://openclawd.com) series.
 
+[The workshop livestream is here](https://www.youtube.com/live/dDQ4rKXeHRw?si=LFThtFen7QrN0z22).
+
+Want to learn more?
+
+[Join the final cohort of our Building AI Applications course starting March 9, 2026]([url](https://maven.com/hugo-stefan/building-ai-apps-ds-and-swe-from-first-principles?promoCode=search))
+
 ## 1 - It's Alive
 
 The difference between a chatbot and an agent is simple: agents can act. In this first installment, we build a simple agent from scratch using the Gemini Python SDK that can call tools in a loop — and even write its own tools to extend its functionality.
