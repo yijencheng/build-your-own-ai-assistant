@@ -47,7 +47,16 @@ async def run(
     )
 
     message = completion.candidates[0].content
-
+    # In the function_call section, we have the args and the name of the tool to call. 
+    # Tool calling enables us to know that when our model is executing its task,
+    # Ex. parts[0].function_call= 
+    #   FunctionCall(
+    #     id=None,
+    #     args={'path': './README.md'},
+    #     name='read_file',
+    #     partial_args=None,
+    #     will_continue=None
+    # ),
     function_calls = [
         part.function_call for part in message.parts if part.function_call
     ]
@@ -101,7 +110,7 @@ async def main() -> None:
                         print(f"\nAssistant: {part.text}")
                 break
             assert tool_result["kind"] == "function_response"
-            contents.append(tool_result["message"])
+            contents.append(tool_result["message"]) ## append the tool responses to the conversation history 
 
 
 if __name__ == "__main__":

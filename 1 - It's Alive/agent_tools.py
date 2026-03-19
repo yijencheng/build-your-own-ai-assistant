@@ -226,4 +226,4 @@ class Bash(AgentTool):
             )
 
 
-TOOLS = [ReadFile, Write, Edit, Bash]
+TOOLS = [ReadFile, Write, Edit, Bash] # Used in the agent_tool_factory.py file to register the tools with the agent runtime.
