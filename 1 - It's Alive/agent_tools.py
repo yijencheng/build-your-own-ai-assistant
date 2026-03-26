@@ -128,6 +128,7 @@ class Edit(AgentTool):
 
         try:
             with open(self.path, "r", encoding="utf-8") as f:
+                # Load the entire file; replacement below only changes matching substrings.
                 original = f.read()
         except Exception as e:
             return self.tool_result(
@@ -153,9 +154,11 @@ class Edit(AgentTool):
             )
 
         if self.replace_all:
+            # Replace every occurrence of old_str with new_str.
             updated = original.replace(self.old_str, self.new_str)
             replacements = occurrences
         else:
+            # Replace only the first occurrence of old_str with new_str.
             updated = original.replace(self.old_str, self.new_str, 1)
             replacements = 1
 
@@ -226,4 +229,7 @@ class Bash(AgentTool):
             )
 
 
-TOOLS = [ReadFile, Write, Edit, Bash] # Used in the agent_tool_factory.py file to register the tools with the agent runtime.
+# Source-of-truth registry for model-callable tools.
+# `AgentRuntime` reloads this module and rebuilds its runtime map from `TOOLS`,
+# so adding a class here makes it available in the next tool loop.
+TOOLS = [ReadFile, Write, Edit, Bash]
